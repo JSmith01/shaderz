@@ -264,7 +264,7 @@
             bufferSize = frameData.buffer.byteLength;
             format = frameData.format;
             if (frameData.format !== 'NV12') {
-                console.error('Only NV12 frames are supported!');
+                alert(`Only NV12 frames are supported but got ${format}!`);
                 throw new Error('Invalid frame format');
             }
             view_y = new Uint8Array(frameData.buffer.buffer, 0, frameData.planes[1].offset);
