@@ -6,6 +6,8 @@
 <body>
 <canvas id="canvas" width="640" height="360"></canvas>
 <video autoplay id="selfVideo"></video>
+<!-- debug -->
+<canvas id="c" width="640" height="360"></canvas>
 <script type="module">
     const vs = `
             attribute vec2 a_position;
@@ -23,29 +25,29 @@
             uniform sampler2D uv_texture;
 
             vec4 getRgb(vec2 coord) {
-                vec4 yuv;
-                yuv.r = texture2D(u_texture, coord).r;
-                yuv.g = texture2D(uv_texture, coord).r - 0.5;
-                yuv.b = texture2D(uv_texture, coord).a - 0.5;
+                float y = texture2D(u_texture, coord).x;
+                float u = texture2D(uv_texture, coord).x - 0.5;
+                float v = texture2D(uv_texture, coord).a - 0.5;
 
                 // Convert YUV to RGB
                 return vec4(
-                    yuv.r + 1.13983 * yuv.b,
-                    yuv.r - 0.39465 * yuv.g - 0.5806 * yuv.b,
-                    yuv.r + 2.03211 * yuv.g,
-                    1.
+                    y + 1.13983 * v,              // R
+                    y - 0.39465 * u - 0.5806 * v, // G
+                    y + 2.03211 * u,              // B
+                    1.0
                 );
             }
 
             void main() {
-                gl_FragColor = pow(getRgb(v_texcoord), vec4(1));
-
-                //gl_FragColor =  texture2D(u_texture, v_texcoord);
+                gl_FragColor = getRgb(v_texcoord);
             }
         `;
 
     const canvas = document.getElementById('canvas');
     const gl = canvas.getContext('webgl2', { alpha: false, antialias: false, colorSpace: "srgb" });
+    // debug
+    const ctx = window.c.getContext('2d');
+    window.ctx = ctx;
 
     if (!gl) throw new Error('WebGL2 is not supported');
 
@@ -95,7 +97,9 @@
     const [track] = stream.getVideoTracks();
     const trackProcessor = new MediaStreamTrackProcessor({ track });
     const reader = trackProcessor.readable.getReader();
-    let buffer;
+    let buffer, buffer_y, buffer_uv;
+    // debug
+    window.catch = false;
     while (true) {
         const readValue = await reader.read();
         if (readValue.done) {
@@ -105,9 +109,14 @@
         /** @var {VideoFrame} */
         const frame = readValue.value;
         if (frame) {
+            const { width, height } = frame.visibleRect;
+            const frameSize = width * height;
+
             if (!buffer || buffer.byteLength !== frame.allocationSize()) {
                 console.log(frame.format, frame.codedWidth, frame.codedHeight, frame.allocationSize(), frame.codedRect.toJSON(), frame.visibleRect.toJSON(), frame.colorSpace.toJSON());
                 buffer = new Uint8Array(frame.allocationSize());
+                buffer_y = new Uint8Array(buffer.buffer, 0, frameSize);
+                buffer_uv = new Uint8Array(buffer.buffer, frameSize);
 
                 if (frame.format !== 'NV12') {
                     console.error('Only NV12 frames are supported!');
@@ -116,20 +125,25 @@
             }
 
             await frame.copyTo(buffer);
-            const { width, height } = frame.visibleRect;
-            const frameSize = width * height;
 
             // Y component
             gl.activeTexture(gl.TEXTURE0);
-            gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, width, height, 0 , gl.LUMINANCE, gl.UNSIGNED_BYTE, buffer.slice(0, frameSize));
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, width, height, 0 , gl.LUMINANCE, gl.UNSIGNED_BYTE, buffer_y);
             gl.generateMipmap(gl.TEXTURE_2D);
 
             // UV component
             gl.activeTexture(gl.TEXTURE1);
-            gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE_ALPHA, width / 2, height / 2, 0 , gl.LUMINANCE_ALPHA, gl.UNSIGNED_BYTE, buffer.slice(frameSize));
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE_ALPHA, width / 2, height / 2, 0 , gl.LUMINANCE_ALPHA, gl.UNSIGNED_BYTE, buffer_uv);
             gl.generateMipmap(gl.TEXTURE_2D);
 
             gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+            // debug to extract the real color space transformation matrix
+            // ctx.drawImage(frame, 0, 0);
+            if (window.catch) {
+                window.caught = frame.clone();
+                window.catch = false;
+            }
 
             frame.close();
         }
