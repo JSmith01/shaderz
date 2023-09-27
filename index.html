@@ -9,6 +9,52 @@
 <!-- debug -->
 <canvas id="c" width="640" height="360"></canvas>
 <script type="module">
+    /**
+     * Produces stream of VideoFrame-s from the given media stream
+     * @param {MediaStream} stream
+     * @returns {AsyncGenerator<{displayHeight: number, duration: number, colorSpace: VideoColorSpaceInit, visibleRect: any, codedWidth: number, codedRect: any, displayWidth: number, format: VideoPixelFormat, codedHeight: number, buffer: Uint8Array, timestamp: number}, void, *>}
+     */
+    async function* getRawFrames(stream) {
+        const [track] = stream.getVideoTracks();
+        const trackProcessor = new MediaStreamTrackProcessor({ track });
+        const reader = trackProcessor.readable.getReader();
+        let buffer, frameData;
+        while (true) {
+            const readValue = await reader.read();
+            if (readValue.done) {
+                console.log('DONE')
+                break;
+            }
+
+            const frame = readValue.value;
+            if (!frame) continue;
+
+            const allocationSize = frame.allocationSize();
+            if (!buffer || buffer.byteLength !== allocationSize) {
+                console.log(frame.format, frame.codedWidth, frame.codedHeight, allocationSize, frame.codedRect.toJSON(), frame.visibleRect.toJSON(), frame.colorSpace.toJSON());
+                buffer = new Uint8Array(allocationSize);
+                frameData = {
+                    format: frame.format,
+                    codedWidth: frame.codedWidth,
+                    codedHeight: frame.codedHeight,
+                    codedRect: frame.codedRect.toJSON(),
+                    visibleRect: frame.visibleRect.toJSON(),
+                    displayWidth: frame.displayWidth,
+                    displayHeight: frame.displayHeight,
+                    duration: frame.duration,
+                    timestamp: frame.timestamp,
+                    colorSpace: frame.colorSpace.toJSON(),
+                    buffer,
+                };
+            }
+
+            frameData.planes = await frame.copyTo(buffer);
+            frame.close();
+
+            yield frameData;
+        }
+    }
+
     const vs = `
             attribute vec2 a_position;
             varying vec2 v_texcoord;
@@ -43,6 +89,46 @@
             }
         `;
 
+    function initWebGl(gl) {
+        const vertexShader = gl.createShader(gl.VERTEX_SHADER);
+        gl.shaderSource(vertexShader, vs);
+        gl.compileShader(vertexShader);
+
+        const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
+        gl.shaderSource(fragmentShader, fs);
+        gl.compileShader(fragmentShader);
+
+        const shaderProgram = gl.createProgram();
+        gl.attachShader(shaderProgram, vertexShader);
+        gl.attachShader(shaderProgram, fragmentShader);
+        gl.linkProgram(shaderProgram);
+        gl.useProgram(shaderProgram);
+
+        const vertices = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
+        const vertexBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+
+        const positionLocation = gl.getAttribLocation(shaderProgram, 'a_position');
+        gl.enableVertexAttribArray(positionLocation);
+        gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+
+
+        gl.activeTexture(gl.TEXTURE0);
+        const texture = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        // Set the texture uniform in the shader
+        const textureLocation = gl.getUniformLocation(shaderProgram, 'u_texture');
+        gl.uniform1i(textureLocation, 0);
+
+
+        gl.activeTexture(gl.TEXTURE1);
+        const texture_uv = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, texture_uv);
+        const textureLocation2 = gl.getUniformLocation(shaderProgram, 'uv_texture');
+        gl.uniform1i(textureLocation2, 1);
+    }
+
     const canvas = document.getElementById('canvas');
     const gl = canvas.getContext('webgl2', { alpha: false, antialias: false, colorSpace: "srgb" });
     // debug
@@ -51,101 +137,44 @@
 
     if (!gl) throw new Error('WebGL2 is not supported');
 
-    const vertexShader = gl.createShader(gl.VERTEX_SHADER);
-    gl.shaderSource(vertexShader, vs);
-    gl.compileShader(vertexShader);
-
-    const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
-    gl.shaderSource(fragmentShader, fs);
-    gl.compileShader(fragmentShader);
-
-    const shaderProgram = gl.createProgram();
-    gl.attachShader(shaderProgram, vertexShader);
-    gl.attachShader(shaderProgram, fragmentShader);
-    gl.linkProgram(shaderProgram);
-    gl.useProgram(shaderProgram);
-
-    const vertices = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
-    const vertexBuffer = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
-
-    const positionLocation = gl.getAttribLocation(shaderProgram, 'a_position');
-    gl.enableVertexAttribArray(positionLocation);
-    gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
-
-
-    gl.activeTexture(gl.TEXTURE0);
-    const texture = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-    // Set the texture uniform in the shader
-    const textureLocation = gl.getUniformLocation(shaderProgram, 'u_texture');
-    gl.uniform1i(textureLocation, 0);
-
-
-    gl.activeTexture(gl.TEXTURE1);
-    const texture_uv = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, texture_uv);
-    const textureLocation2 = gl.getUniformLocation(shaderProgram, 'uv_texture');
-    gl.uniform1i(textureLocation2, 1);
-
+    initWebGl(gl);
 
     // camera load
     const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 360 } });
     document.getElementById('selfVideo').srcObject = stream;
 
-    const [track] = stream.getVideoTracks();
-    const trackProcessor = new MediaStreamTrackProcessor({ track });
-    const reader = trackProcessor.readable.getReader();
-    let buffer, buffer_y, buffer_uv;
-    // debug
-    window.catch = false;
-    while (true) {
-        const readValue = await reader.read();
-        if (readValue.done) {
-            console.log('DONE')
-            break;
+    let bufferSize, format, view_y, view_uv;
+    for await (const frameData of getRawFrames(stream)) {
+        if (bufferSize !== frameData.buffer.byteLength || format !== frameData.format) {
+            bufferSize = frameData.buffer.byteLength;
+            format = frameData.format;
+            if (frameData.format !== 'NV12') {
+                console.error('Only NV12 frames are supported!');
+                throw new Error('Invalid frame format');
+            }
+            view_y = new Uint8Array(frameData.buffer.buffer, 0, frameData.planes[1].offset);
+            view_uv = new Uint8Array(frameData.buffer.buffer, frameData.planes[1].offset);
         }
-        /** @var {VideoFrame} */
-        const frame = readValue.value;
-        if (frame) {
-            const { width, height } = frame.visibleRect;
-            const frameSize = width * height;
 
-            if (!buffer || buffer.byteLength !== frame.allocationSize()) {
-                console.log(frame.format, frame.codedWidth, frame.codedHeight, frame.allocationSize(), frame.codedRect.toJSON(), frame.visibleRect.toJSON(), frame.colorSpace.toJSON());
-                buffer = new Uint8Array(frame.allocationSize());
-                buffer_y = new Uint8Array(buffer.buffer, 0, frameSize);
-                buffer_uv = new Uint8Array(buffer.buffer, frameSize);
+        const { width, height } = frameData.visibleRect;
 
-                if (frame.format !== 'NV12') {
-                    console.error('Only NV12 frames are supported!');
-                    throw new Error('Invalid frame format');
-                }
-            }
+        // Y component
+        gl.activeTexture(gl.TEXTURE0);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, width, height, 0 , gl.LUMINANCE, gl.UNSIGNED_BYTE, view_y);
+        gl.generateMipmap(gl.TEXTURE_2D);
 
-            await frame.copyTo(buffer);
+        // UV component
+        gl.activeTexture(gl.TEXTURE1);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE_ALPHA, width / 2, height / 2, 0 , gl.LUMINANCE_ALPHA, gl.UNSIGNED_BYTE, view_uv);
+        gl.generateMipmap(gl.TEXTURE_2D);
 
-            // Y component
-            gl.activeTexture(gl.TEXTURE0);
-            gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, width, height, 0 , gl.LUMINANCE, gl.UNSIGNED_BYTE, buffer_y);
-            gl.generateMipmap(gl.TEXTURE_2D);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
-            // UV component
-            gl.activeTexture(gl.TEXTURE1);
-            gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE_ALPHA, width / 2, height / 2, 0 , gl.LUMINANCE_ALPHA, gl.UNSIGNED_BYTE, buffer_uv);
-            gl.generateMipmap(gl.TEXTURE_2D);
-
-            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-
-            // debug to extract the real color space transformation matrix
-            // ctx.drawImage(frame, 0, 0);
-            if (window.catch) {
-                window.caught = frame.clone();
-                window.catch = false;
-            }
-
-            frame.close();
+        // debug to extract the real color space transformation matrix
+        // ctx.drawImage(frame, 0, 0);
+        if (window.catch) {
+            window.caught = { ...frameData, buffer: frameData.buffer.slice() };
+            window.catch = false;
         }
     }
 </script>
