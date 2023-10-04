@@ -26,15 +26,11 @@
     const VIDEO_RESOLUTION = { width: 320, height: 180 };
     const VIDEO_BITRATE = 240_000;
 
-    const IS_CAS = localStorage.isCas ? !!JSON.parse(localStorage.isCas) : false;
-
-    const [vs, fs] = await Promise.all([
+    const [vs, fs, fs2] = await Promise.all([
         await fetch('vertex.glsl').then(r => r.text()),
-        fetch(IS_CAS ? 'yuv-i420-cas.glsl' : 'easu.glsl').then(r => r.text()),
+        fetch('easu.glsl').then(r => r.text()),
+        fetch('cas.glsl').then(r => r.text()),
     ]);
-    if (!IS_CAS) {
-        document.getElementById('canvas').style.transform = 'scaleY(-1)';
-    }
 
     /**
      * @param {CanvasRenderingContext2D} ctx
@@ -46,7 +42,7 @@
 
     if (!gl) throw new Error('WebGL2 is not supported');
 
-    const drawGl = initWebGl(gl, vs, fs);
+    const drawGl = initWebGl(gl, vs, fs, fs2);
 
     const inStream = await navigator.mediaDevices.getUserMedia({ video: VIDEO_RESOLUTION });
     window.in.srcObject = inStream;
