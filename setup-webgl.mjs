@@ -4,11 +4,15 @@ function prepareShader(gl, vs, fs) {
     const vertexShader = gl.createShader(gl.VERTEX_SHADER);
     gl.shaderSource(vertexShader, vs);
     gl.compileShader(vertexShader);
+    let message = gl.getShaderInfoLog(vertexShader);
+    if (message.length > 0) throw message;
     gl.attachShader(shaderProgram, vertexShader);
 
     const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
     gl.shaderSource(fragmentShader, fs);
     gl.compileShader(fragmentShader);
+    message = gl.getShaderInfoLog(fragmentShader);
+    if (message.length > 0) throw message;
     gl.attachShader(shaderProgram, fragmentShader);
 
     gl.linkProgram(shaderProgram);
@@ -47,9 +51,7 @@ export function initWebGl(gl, vs, fs) {
     const textureDimsLoc = gl.getUniformLocation(shaderProgram, 'texture_dims');
 
     return function drawGl(width, height, view_y, view_uv, separate_uv = false) {
-        // FIXME probably incorrect setup for geometry and texture
-        gl.uniform2f(canvasDimsLoc, /*gl.canvas.width, gl.canvas.height*/1, 1);
-
+        gl.uniform2f(canvasDimsLoc, gl.canvas.width, gl.canvas.height);
         gl.uniform2f(textureDimsLoc, width, height);
 
         // Y component

@@ -20,11 +20,21 @@
 <canvas id="canvas" width="640" height="360"></canvas>
 <script type="module">
     import { initWebGl } from './setup-webgl.mjs';
+    import { getRawFrames } from './get-raw-frames.mjs';
+    import { passViaWebRTC } from './webrtc-pass.mjs';
+
+    const VIDEO_RESOLUTION = { width: 320, height: 180 };
+    const VIDEO_BITRATE = 240_000;
+
+    const IS_CAS = localStorage.isCas ? !!JSON.parse(localStorage.isCas) : false;
 
     const [vs, fs] = await Promise.all([
         await fetch('vertex.glsl').then(r => r.text()),
-        fetch('yuv-i420-cas.glsl').then(r => r.text()),
+        fetch(IS_CAS ? 'yuv-i420-cas.glsl' : 'easu.glsl').then(r => r.text()),
     ]);
+    if (!IS_CAS) {
+        document.getElementById('canvas').style.transform = 'scaleY(-1)';
+    }
 
     /**
      * @param {CanvasRenderingContext2D} ctx
@@ -38,35 +48,10 @@
 
     const drawGl = initWebGl(gl, vs, fs);
 
-    async function setupWebRTC(stream) {
-        const [track] = stream.getVideoTracks();
-        const pc1 = new RTCPeerConnection();
-        window.pc1 = pc1;
-        const pc2 = new RTCPeerConnection();
-        window.pc2 = pc2;
-        pc1.onicecandidate = e => pc2.addIceCandidate(e.candidate);
-        pc2.onicecandidate = e => pc1.addIceCandidate(e.candidate);
-        let resultResolver;
-        const result = new Promise(resolve => {
-            resultResolver = resolve;
-        });
-        pc2.ontrack = e => { resultResolver(new MediaStream([e.track])); }
-        pc1.addTrack(track);
-        const offer = await pc1.createOffer();
-        await pc1.setLocalDescription(offer);
-        await pc2.setRemoteDescription(offer);
-        const answer = await pc2.createAnswer();
-        await pc2.setLocalDescription(answer);
-        await pc1.setRemoteDescription(answer);
-
-        return result;
-    }
-
-    import { getRawFrames } from './get-raw-frames.mjs';
-    const inStream = await navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 180 }});
+    const inStream = await navigator.mediaDevices.getUserMedia({ video: VIDEO_RESOLUTION });
     window.in.srcObject = inStream;
 
-    const outStream = await setupWebRTC(inStream);
+    const outStream = await passViaWebRTC(inStream, VIDEO_BITRATE);
     window.out.srcObject = outStream;
 
     let bufferSize = 0, format = '', view_y, view_uv;
