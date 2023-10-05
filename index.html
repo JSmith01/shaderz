@@ -4,11 +4,7 @@
     <meta charset="UTF-8">
     <title>Video postprocessing demo for Q1</title>
     <style>
-        #in {
-            width: 640px;
-            height: 360px;
-        }
-        #out {
+        #in, #out, #postprocessed > canvas{
             width: 640px;
             height: 360px;
         }
@@ -30,9 +26,19 @@
             top: 0;
             text-align: center;
         }
+        .comparison > div#postprocessed > span {
+            display: none;
+        }
+        .comparison > div#postprocessed > canvas + span {
+            display: block;
+        }
+        #beginPostprocessing {
+            margin-bottom: 5px;
+        }
     </style>
 </head>
 <body>
+<button id="beginPostprocessing" disabled>start postprocessing</button>
 <div class="comparison">
     <div>
         <span>Original (Q2?)</span>
@@ -42,37 +48,20 @@
         <span>Q1 resized</span>
         <video autoplay id="out"></video>
     </div>
-    <div>
+    <div id="postprocessed">
         <span>Q1 post-processed</span>
-        <canvas id="canvas" width="640" height="360"></canvas>
     </div>
 </div>
 
 <script type="module">
-    import { initWebGl } from './setup-webgl.mjs';
-    import { getRawFrames } from './get-raw-frames.mjs';
     import { passViaWebRTC } from './webrtc-pass.mjs';
+    import { makePostprocessedCanvas } from './make-processed-canvas.mjs';
+
+    const beginBtn = document.getElementById('beginPostprocessing');
+    const postProcessedDiv = document.getElementById('postprocessed');
 
     const VIDEO_RESOLUTION = { width: 320, height: 180 };
     const VIDEO_BITRATE = 240_000;
-
-    const [vs, fs, fs2] = await Promise.all([
-        await fetch('vertex.glsl').then(r => r.text()),
-        fetch('easu.glsl').then(r => r.text()),
-        fetch('cas.glsl').then(r => r.text()),
-    ]);
-
-    /**
-     * @param {CanvasRenderingContext2D} ctx
-     * @param {object} target
-     * @returns {(function(*): void)} function to check if "target.catchFrame" was called and if so, store provided frame data
-     */
-    const canvas = document.getElementById('canvas');
-    const gl = canvas.getContext('webgl2', { alpha: true, antialias: false, colorSpace: "srgb" });
-
-    if (!gl) throw new Error('WebGL2 is not supported');
-
-    const drawGl = initWebGl(gl, vs, fs, fs2);
 
     const inStream = await navigator.mediaDevices.getUserMedia({ video: VIDEO_RESOLUTION });
     window.in.srcObject = inStream;
@@ -80,21 +69,37 @@
     const outStream = await passViaWebRTC(inStream, VIDEO_BITRATE);
     window.out.srcObject = outStream;
 
-    let bufferSize = 0, format = '', view_y, view_uv;
-    for await (const frameData of getRawFrames(outStream)) {
-        if (bufferSize !== frameData.buffer.byteLength || format !== frameData.format) {
-            bufferSize = frameData.buffer.byteLength;
-            format = frameData.format;
-            if (frameData.format !== 'I420') {
-                alert(`Only I420 frames are supported but got ${format}!`);
-                throw new Error('Invalid frame format');
-            }
-            view_y = new Uint8Array(frameData.buffer.buffer, 0, frameData.planes[1].offset);
-            view_uv = new Uint8Array(frameData.buffer.buffer, frameData.planes[1].offset);
+    beginBtn.disabled = false;
+
+    let canvas = null, abortController;
+
+    async function togglePostprocessing() {
+        beginBtn.disabled = true;
+
+        if (canvas) {
+            postProcessedDiv.removeChild(canvas);
+            abortController?.abort();
+            canvas = null;
+            abortController = null;
+        } else {
+            abortController = new AbortController();
+            canvas = await makePostprocessedCanvas(
+                outStream,
+                VIDEO_RESOLUTION.width * 2,
+                VIDEO_RESOLUTION.height * 2,
+                abortController.signal
+            );
+            postProcessedDiv.prepend(canvas);
         }
 
-        drawGl(frameData.visibleRect.width, frameData.visibleRect.height, view_y, view_uv, true);
+        beginBtn.innerText = `${!canvas ? 'start' : 'stop'} postprocessing`;
+        beginBtn.disabled = false;
     }
+
+    beginBtn.onclick = togglePostprocessing;
+
+    //await togglePostprocessing();
+
 </script>
 </body>
 </html>
