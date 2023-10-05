@@ -35,16 +35,30 @@
         #beginPostprocessing {
             margin-bottom: 5px;
         }
+        input#camera ~ .comparison > .camera-tile {
+            display: none;
+        }
+        input#camera:checked ~ .comparison > .camera-tile {
+            display: block;
+        }
+        input#q1tile ~ .comparison > .q1-tile {
+            display: none;
+        }
+        input#q1tile:checked ~ .comparison > .q1-tile {
+            display: block;
+        }
     </style>
 </head>
 <body>
 <button id="beginPostprocessing" disabled>start postprocessing</button>
+<input type="checkbox" id="camera" checked><label for="camera">camera</label>
+<input type="checkbox" id="q1tile" checked><label for="q1tile">q1 tile</label>
 <div class="comparison">
-    <div>
+    <div class="camera-tile">
         <span>Original (Q2?)</span>
         <video autoplay id="in"></video>
     </div>
-    <div>
+    <div class="q1-tile">
         <span>Q1 resized</span>
         <video autoplay id="out"></video>
     </div>
