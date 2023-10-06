@@ -29,7 +29,7 @@ vec3 FsrEasuCF(vec2 coord) {
     // @see https://fourcc.org/fccyvrgb.php - the first YUV -> RGB
     return vec3(
         y + 1.5959 * v,              // R - manually calculated
-        y - 0.3918 * u - 0.813 * v, // G - manually calculated U coefficient
+        y - 0.39172 * u - 0.813 * v, // G - manually calculated U coefficient
         y + 2.0173 * u              // B - manually calculated
     );
 }

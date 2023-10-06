@@ -27,7 +27,7 @@
                 const idx = y * w + x;
                 buffer[idx] = intensity;
                 buffer[idx + offset1] = x % 256;
-                buffer[idx + offset2] = 128//y % 256;
+                buffer[idx + offset2] = y % 256;
             }
         }
 
@@ -119,7 +119,7 @@
     const predictRgb = ([y, u, v]) => [
         // @see https://fourcc.org/fccyvrgb.php - the first YUV -> RGB
         y + 1.5959 * v,              // R
-        y - 0.3918 * u - 0.813 * v, // G
+        y - 0.39172 * u - 0.813 * v, // G
         y + 2.0173 * u              // B
     ];
 
