@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport"
+          content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>test YUV -> RGB</title>
+    <style>
+        #c, #o {
+            width: 512px;
+            height: 512px;
+        }
+    </style>
+</head>
+<body>
+<canvas id="c" width="256" height="256"></canvas>
+<canvas id="o" width="256" height="256"></canvas>
+<script>
+    function generateBuffer(intensity, w, h) {
+        const planeSize = w * h;
+        const offset1 = planeSize;
+        const offset2 = planeSize * 2;
+        const buffer = new Uint8Array(planeSize * 3);
+        for (let y = 0; y < w; y++) {
+            for (let x = 0; x < h; x++) {
+                const idx = y * w + x;
+                buffer[idx] = intensity;
+                buffer[idx + offset1] = x % 256;
+                buffer[idx + offset2] = 128//y % 256;
+            }
+        }
+
+        return buffer;
+    }
+
+    function generateBufferGrayscale(intensity, w, h) {
+        const planeSize = w * h;
+        const offset1 = planeSize;
+        const offset2 = planeSize * 2;
+        const buffer = new Uint8Array(planeSize * 3);
+        for (let y = 0; y < w; y++) {
+            for (let x = 0; x < h; x++) {
+                const idx = y * w + x;
+                buffer[idx] = y;
+                buffer[idx + offset1] = 128;
+                buffer[idx + offset2] = 128;
+            }
+        }
+
+        return buffer;
+    }
+
+    function generateYuvFrame(dataYuv, w, h) {
+        return new VideoFrame(dataYuv.buffer, {
+            format: 'I444',
+            codedWidth: w,
+            codedHeight: h,
+            timestamp: 0,
+            colorSpace: {
+                fullRange: null,
+                matrix: null,
+                primaries: null,
+                transfer: null,
+            }
+        });
+    }
+
+    /** @type {HTMLCanvasElement} */
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const W = canvas.width;
+    const H = canvas.height;
+    let dataYuv, frameYuv, frameRgb;
+
+    function paint(intensity = 126) {
+        dataYuv = generateBuffer(intensity, W, H);
+        frameYuv = generateYuvFrame(dataYuv, W, H);
+        ctx.drawImage(frameYuv, 0, 0);
+        frameYuv.close();
+        frameRgb = ctx.getImageData(0, 0, W, H);
+    }
+    paint();
+
+    function repaintR() {
+        const newData = frameRgb.data.slice();
+        for (let i = 0; i < newData.byteLength; i+=4) { newData[i+1] = 0; newData[i+2] = 0; }
+        ctx.putImageData(new ImageData(newData, W), 0, 0);
+    }
+
+    function repaintG() {
+        const newData = frameRgb.data.slice();
+        for (let i = 0; i < newData.byteLength; i+=4) { newData[i] = 0; newData[i+2] = 0; }
+        ctx.putImageData(new ImageData(newData, W), 0, 0);
+    }
+
+    function repaintB() {
+        const newData = frameRgb.data.slice();
+        for (let i = 0; i < newData.byteLength; i+=4) { newData[i] = 0; newData[i+1] = 0; }
+        ctx.putImageData(new ImageData(newData, W), 0, 0);
+    }
+
+    const checkLine = (y, c) => Array.from({length:256},(_,i)=>i).every(i => getPixel(i, y).rgb[c] === getPixel(0, y).rgb[c]);
+    const checkVertGrad = c => Array.from({length:256},(_,i)=>i).every(i => checkLine(i, c));
+    const ensureRLinear = () => Array.from({length:256},(_,i)=>i).every(i => { paint(i); return checkVertGrad(0); });
+
+    const checkColumn = (x, c) => Array.from({length:256},(_,i)=>i).every(i => getPixel(x, i).rgb[c] === getPixel(x, 0).rgb[c]);
+    const checkHorizGrad = c => Array.from({length:256},(_,i)=>i).every(i => checkColumn(i, c));
+    const ensureBLinear = () => Array.from({length:256},(_,i)=>i).every(i => { paint(i); return checkHorizGrad(2); });
+
+
+    const normY = y => (y - 16) / (235 - 16);
+
+
+    const grayscaleY = v => clamp(Math.round((v - 16) / (235-16) * 255))
+    const makeCalcR = (k = 1.5959) => ([y, u, v]) => clamp(Math.round((normY(y) + k * (v - 128) / 255) * 255));
+    const makeCalcB = (k = 2.0173) => ([y, u, v]) => clamp(Math.round((normY(y) + k * (u - 128) / 255) * 255));
+
+    const predictRgb = ([y, u, v]) => [
+        // @see https://fourcc.org/fccyvrgb.php - the first YUV -> RGB
+        y + 1.5959 * v,              // R
+        y - 0.3918 * u - 0.813 * v, // G
+        y + 2.0173 * u              // B
+    ];
+
+    const getPixelColumn = c => Array.from({ length: 256 },(_, i) => i).map(i => {
+        let p = getPixel(0, i);
+        return [p.rgb[c], p.rgb1[c]];
+    });
+    const getPixelRow = c => Array.from({ length: 256 },(_, i) => i).map(i => {
+        let p = getPixel(i, 0);
+        return [p.rgb[c], p.rgb1[c]];
+    });
+    const comparePairs = pairs => pairs.reduce((a,[v1, v2]) => {
+        const v= Math.abs(v1-v2);
+        return a + (v > 0 ? 10 ** (v - 1) : 0);
+        }, 0);
+
+    const clamp = v => {
+        const i = Math.round(v);
+        if (i >= 0 && i <= 255) return i;
+        if (i < 0) return 0;
+        if (i > 255) return 255;
+    }
+    const yuvToIntRgb = ([y, u, v]) => {
+        const [r, g, b] = predictRgb([y, u, v]);
+        return [clamp(r * 255), clamp(g * 255), clamp(b * 255)];
+    }
+
+    function getPixel(x, y) {
+        const planeSize = W * H;
+        const idx = x + y * W;
+        const Yc = dataYuv[idx];
+        const Uc = dataYuv[idx + planeSize];
+        const Vc = dataYuv[idx + planeSize * 2];
+        const yuv = [Yc, Uc, Vc];
+        const yuvNorm = [normY(Yc), (Uc - 128) / 255, (Vc - 128) / 255];
+        const rgb1 = yuvToIntRgb(yuvNorm);
+        const rgb = Array.from(frameRgb.data.slice(idx * 4, idx * 4 + 3));
+        const rgbNorm = rgb.map(v => v / 255);
+
+        return { yuv, yuvNorm, rgb, rgbNorm, rgb1 };
+    }
+
+</script>
+</body>
+</html>

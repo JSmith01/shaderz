@@ -14,7 +14,7 @@ uniform vec2 texture_dims;
 uniform sampler2D u_texture;
 uniform sampler2D uv_texture;
 const float lowYLimit = 16.0;
-const float highYLimit = 240.0;
+const float highYLimit = 235.0;
 const float shiftY = lowYLimit / 255.0;
 const float scaleY = 255.0 / (highYLimit - lowYLimit);
 
@@ -26,11 +26,11 @@ vec3 FsrEasuCF(vec2 coord) {
     y = (y - shiftY) * scaleY;
 
     // Convert YUV to RGB - BT.709
-    // https://gist.github.com/yohhoy/dafa5a47dade85d8b40625261af3776a
+    // @see https://fourcc.org/fccyvrgb.php - the first YUV -> RGB
     return vec3(
-        y + 1.5748 * v,              // R
-        y - 0.1873242729306488 * u - 0.46812427293064884 * v, // G
-        y + 1.8556 * u              // B
+        y + 1.5959 * v,              // R - manually calculated
+        y - 0.3918 * u - 0.813 * v, // G - manually calculated U coefficient
+        y + 2.0173 * u              // B - manually calculated
     );
 }
 
